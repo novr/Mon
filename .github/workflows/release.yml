@@ -1,0 +1,113 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  release-macos:
+    runs-on: macos-14
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      sha256: ${{ steps.package.outputs.sha256 }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid tag format: ${TAG}"
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          if [[ "${VERSION}" == *-* ]]; then
+            PRERELEASE=true
+          else
+            PRERELEASE=false
+          fi
+          {
+            echo "tag=${TAG}"
+            echo "version=${VERSION}"
+            echo "prerelease=${PRERELEASE}"
+            echo "asset=mon_${VERSION}_darwin.tar.gz"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Build universal binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for ARCH in arm64 x86_64; do
+            swift build -c release --arch "${ARCH}" --build-path ".build/${ARCH}"
+            BIN_DIR="$(swift build -c release --arch "${ARCH}" --build-path ".build/${ARCH}" --show-bin-path)"
+            cp "${BIN_DIR}/Mon" "dist/mon-${ARCH}"
+          done
+          lipo -create -output dist/mon dist/mon-arm64 dist/mon-x86_64
+          rm dist/mon-arm64 dist/mon-x86_64
+          strip -x dist/mon
+          lipo -info dist/mon
+          for ARCH in arm64 x86_64; do
+            lipo dist/mon -verify_arch "${ARCH}"
+            MINOS="$(otool -arch "${ARCH}" -l dist/mon | awk '/LC_BUILD_VERSION/{f=1} f && /^[[:space:]]*minos /{print $2; exit}')"
+            if [[ "${MINOS}" != "12.0" ]]; then
+              echo "Expected minos 12.0 for ${ARCH}, got ${MINOS}"
+              exit 1
+            fi
+          done
+          chmod +x dist/mon
+          dist/mon --help | grep -q "USAGE: mon"
+
+      - name: Package release asset
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASSET="${{ steps.meta.outputs.asset }}"
+          tar -C dist -czf "${ASSET}" mon
+          SHA256="$(shasum -a 256 "${ASSET}" | awk '{print $1}')"
+          echo "${SHA256}  ${ASSET}" > checksums.txt
+          echo "sha256=${SHA256}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          ASSET="${{ steps.meta.outputs.asset }}"
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${ASSET}" checksums.txt --clobber
+          else
+            FLAGS=(--generate-notes --title "${TAG}" --verify-tag)
+            if [[ "${{ steps.meta.outputs.prerelease }}" == "true" ]]; then
+              FLAGS+=(--prerelease)
+            fi
+            gh release create "${TAG}" "${ASSET}" checksums.txt "${FLAGS[@]}"
+          fi
+
+  dispatch-formula:
+    needs: release-macos
+    if: needs.release-macos.outputs.prerelease != 'true'
+    uses: novr/homebrew-taps/.github/workflows/dispatch-formula.yml@83e6e66a6002a6c89abd8226267a5cd8938c8338
+    with:
+      formula: mon
+      version: ${{ needs.release-macos.outputs.version }}
+      sha256: ${{ needs.release-macos.outputs.sha256 }}
+    secrets:
+      NOVRD_BOT_CLIENT_ID: ${{ secrets.NOVRD_BOT_CLIENT_ID }}
+      NOVRD_BOT_KEY: ${{ secrets.NOVRD_BOT_KEY }}
