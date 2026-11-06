@@ -301,7 +301,11 @@ private struct BitmapSpec {
 
     var bitmapInfo: UInt32 {
         let alpha: CGImageAlphaInfo = hasAlpha ? .premultipliedLast : .noneSkipLast
-        return alpha.rawValue
+        var info = alpha.rawValue
+        if bitsPerComponent == 16 {
+            info |= CGBitmapInfo.byteOrder16Little.rawValue
+        }
+        return info
     }
 
 }
