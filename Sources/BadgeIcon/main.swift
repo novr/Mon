@@ -4,7 +4,7 @@ import Foundation
 struct BadgeIconCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "mon",
-        abstract: "アプリアイコンに斜めのリボンバッジを合成する"
+        abstract: "アプリアイコンに帯バッジを合成する"
     )
 
     @Option(name: .shortAndLong, help: "入力画像のパス")
@@ -22,6 +22,9 @@ struct BadgeIconCommand: ParsableCommand {
     @Option(name: .long, help: "帯の色。#RRGGBB または #RRGGBBAA")
     var color: String = "#1E1E1ED9"
 
+    @Option(name: .shortAndLong, help: "帯の位置。top（上端）、bottom（下端）、ribbon（右上の斜めリボン）。省略時は bottom")
+    var position: String = "bottom"
+
     func validate() throws {
         _ = try resolved()
     }
@@ -33,7 +36,8 @@ struct BadgeIconCommand: ParsableCommand {
             output: job.output,
             title: job.title,
             subtitle: job.subtitle,
-            color: job.color
+            color: job.color,
+            position: job.position
         )
     }
 
@@ -84,12 +88,17 @@ struct BadgeIconCommand: ParsableCommand {
             throw ValidationError("色の指定が正しくありません（#RRGGBB または #RRGGBBAA）: \(color)")
         }
 
+        guard let ribbonPosition = RibbonPosition.parse(position) else {
+            throw ValidationError("位置の指定が正しくありません（top、bottom、ribbon）: \(position)")
+        }
+
         return RenderJob(
             input: inputURL,
             output: outputURL,
             title: trimmedTitle,
             subtitle: resolvedSubtitle,
-            color: ribbonColor
+            color: ribbonColor,
+            position: ribbonPosition
         )
     }
 }

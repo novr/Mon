@@ -1,6 +1,6 @@
 # Mon
 
-macOS のアプリアイコンに、ビルド番号やブランチ名の斜めリボンを合成する CLI です。
+macOS のアプリアイコンに、ビルド番号やブランチ名の帯バッジを合成する CLI です。既定は下端の水平な帯です。上端の帯と右上の斜めリボンも選べます。
 
 - Pure Swift。画像処理の外部ライブラリは使いません。
 - 実行時のシステム依存はありません。CoreGraphics / CoreText / ImageIO だけで描画します。
@@ -34,11 +34,13 @@ SwiftPM のプロダクト名は `Mon` です。Homebrew とリリースアー�
 -t, --title <string>     帯の上段（必須）
 -s, --subtitle <string>  帯の下段
 --color <hex>            帯の色。#RRGGBB または #RRGGBBAA（既定 #1E1E1ED9）
+-p, --position <value>   top（上端の水平な帯） / bottom（下端の水平な帯） / ribbon（右上の斜めリボン）。既定 bottom
 ```
 
 ```bash
 mon -i AppIcon.png -t DEV -s "v1.2.0 (42)"
 mon -i photo.jpg -o photo-badged.png -t MAIN --color "#C0392B"
+mon -i AppIcon.png -t DEV -s "v1.2.0 (42)" -p ribbon
 ```
 
 入力が JPEG などのとき、`-o` を省略すると上書きせず終了します。`.png` 以外の出力拡張子は受け付けません。

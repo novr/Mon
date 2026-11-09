@@ -7,11 +7,13 @@ import UniformTypeIdentifiers
 
 final class AppIconRendererTests {
     private let directory: URL
+    private let firstRowIsTop: Bool
 
     init() throws {
         directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("mon-tests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        firstRowIsTop = try Self.detectFirstRowIsTop()
     }
 
     deinit {
@@ -55,8 +57,8 @@ final class AppIconRendererTests {
         let image = try load(output)
         #expect(hasAlpha(image))
         #expect(image.colorSpace?.name == CGColorSpace.sRGB)
-        let untouched = try pixels(image)
-        #expect((100...200).contains(Int(untouched[3])))
+        let center = try rgba(image, x: 16, yFromTop: 16)
+        #expect((100...200).contains(Int(center.a)))
     }
 
     @Test func longTitleKeepsDimensions() throws {
@@ -93,12 +95,16 @@ final class AppIconRendererTests {
             colorSpace: try #require(CGColorSpace(name: CGColorSpace.sRGB)),
             hasAlpha: false
         )
-        let before = try pixels(try load(input))
+        let beforeImage = try load(input)
+        let beforeCenter = try rgba(beforeImage, x: 32, yFromTop: 32)
+        let beforeBottom = try rgba(beforeImage, x: 32, yFromTop: 60)
         try render(input: input, output: input, title: "DEV", subtitle: "v1.2.0 (42)")
-        let after = try pixels(try load(input))
+        let afterImage = try load(input)
+        let afterCenter = try rgba(afterImage, x: 32, yFromTop: 32)
+        let afterBottom = try rgba(afterImage, x: 32, yFromTop: 60)
 
-        #expect(before.prefix(4) == after.prefix(4))
-        #expect(before != after)
+        #expect(beforeCenter == afterCenter)
+        #expect(beforeBottom != afterBottom)
     }
 
     @Test func sixteenBitDepthIsPreserved() throws {
@@ -171,13 +177,143 @@ final class AppIconRendererTests {
         expectRejected(["-i", input.path, "-t", "   "], containing: "title が空です")
     }
 
-    private func render(input: URL, output: URL, title: String, subtitle: String?) throws {
+    @Test func invalidPositionIsRejected() throws {
+        let input = try fixturePNG()
+        expectRejected(
+            ["-i", input.path, "-t", "DEV", "--position", "left"],
+            containing: "位置の指定が正しくありません"
+        )
+    }
+
+    @Test func defaultPositionIsBottom() throws {
+        let input = try fixturePNG()
+        let command = try BadgeIconCommand.parse(["-i", input.path, "-t", "DEV"])
+        try command.validate()
+        #expect(command.position == "bottom")
+    }
+
+    @Test func omittedPositionMatchesBottomRender() throws {
+        let input = directory.appendingPathComponent("default-pos.png")
+        try writeImage(
+            to: input,
+            type: .png,
+            width: 64,
+            height: 64,
+            colorSpace: try #require(CGColorSpace(name: CGColorSpace.sRGB)),
+            hasAlpha: false
+        )
+        let omitted = directory.appendingPathComponent("default-omitted.png")
+        let explicit = directory.appendingPathComponent("default-bottom.png")
+        var command = try BadgeIconCommand.parse(["-i", input.path, "-o", omitted.path, "-t", "DEV", "-s", "v1"])
+        try command.run()
+        command = try BadgeIconCommand.parse([
+            "-i", input.path, "-o", explicit.path, "-t", "DEV", "-s", "v1", "--position", "bottom",
+        ])
+        try command.run()
+        let omittedImage = try load(omitted)
+        let omittedPixels = try pixels(omittedImage)
+        let explicitPixels = try pixels(try load(explicit))
+        #expect(omittedPixels == explicitPixels)
+
+        let source = try load(input)
+        #expect(try rgba(omittedImage, x: 32, yFromTop: 4) == rgba(source, x: 32, yFromTop: 4))
+        #expect(try rgba(omittedImage, x: 32, yFromTop: 60) != rgba(source, x: 32, yFromTop: 60))
+    }
+
+    @Test func bottomBandPaintsBottomAndLeavesTop() throws {
+        let input = directory.appendingPathComponent("bottom.png")
+        try writeImage(
+            to: input,
+            type: .png,
+            width: 64,
+            height: 64,
+            colorSpace: try #require(CGColorSpace(name: CGColorSpace.sRGB)),
+            hasAlpha: false
+        )
+        let before = try load(input)
+        let beforeTop = try rgba(before, x: 32, yFromTop: 4)
+        let beforeBottom = try rgba(before, x: 32, yFromTop: 60)
+        let output = directory.appendingPathComponent("bottom-out.png")
+        try render(input: input, output: output, title: "DEV", subtitle: nil, position: .bottom)
+        let after = try load(output)
+        #expect(try rgba(after, x: 32, yFromTop: 4) == beforeTop)
+        #expect(try rgba(after, x: 32, yFromTop: 60) != beforeBottom)
+    }
+
+    @Test func topBandPaintsTopAndLeavesBottom() throws {
+        let input = directory.appendingPathComponent("top.png")
+        try writeImage(
+            to: input,
+            type: .png,
+            width: 64,
+            height: 64,
+            colorSpace: try #require(CGColorSpace(name: CGColorSpace.sRGB)),
+            hasAlpha: false
+        )
+        let before = try load(input)
+        let beforeTop = try rgba(before, x: 32, yFromTop: 4)
+        let beforeBottom = try rgba(before, x: 32, yFromTop: 60)
+        let output = directory.appendingPathComponent("top-out.png")
+        try render(input: input, output: output, title: "DEV", subtitle: nil, position: .top)
+        let after = try load(output)
+        #expect(try rgba(after, x: 32, yFromTop: 4) != beforeTop)
+        #expect(try rgba(after, x: 32, yFromTop: 60) == beforeBottom)
+    }
+
+    @Test func ribbonPaintsTopRightAndLeavesBottomLeft() throws {
+        let input = directory.appendingPathComponent("ribbon.png")
+        try writeImage(
+            to: input,
+            type: .png,
+            width: 64,
+            height: 64,
+            colorSpace: try #require(CGColorSpace(name: CGColorSpace.sRGB)),
+            hasAlpha: false
+        )
+        let before = try load(input)
+        let beforeBottomLeft = try rgba(before, x: 4, yFromTop: 60)
+        // 右上角からの距離 (13 + 13) / √2 ≈ 18.4。帯の中心 0.28 * 64 ≈ 17.9 に近く、縁の白線から離れている。
+        let beforeRibbon = try rgba(before, x: 51, yFromTop: 13)
+        let output = directory.appendingPathComponent("ribbon-out.png")
+        try render(input: input, output: output, title: "DEV", subtitle: "v1", position: .ribbon)
+        let after = try load(output)
+        #expect(try rgba(after, x: 4, yFromTop: 60) == beforeBottomLeft)
+        #expect(try rgba(after, x: 51, yFromTop: 13) != beforeRibbon)
+    }
+
+    @Test func topAndBottomRendersDiffer() throws {
+        let input = directory.appendingPathComponent("diff.png")
+        try writeImage(
+            to: input,
+            type: .png,
+            width: 64,
+            height: 64,
+            colorSpace: try #require(CGColorSpace(name: CGColorSpace.sRGB)),
+            hasAlpha: false
+        )
+        let top = directory.appendingPathComponent("diff-top.png")
+        let bottom = directory.appendingPathComponent("diff-bottom.png")
+        try render(input: input, output: top, title: "DEV", subtitle: nil, position: .top)
+        try render(input: input, output: bottom, title: "DEV", subtitle: nil, position: .bottom)
+        let topPixels = try pixels(try load(top))
+        let bottomPixels = try pixels(try load(bottom))
+        #expect(topPixels != bottomPixels)
+    }
+
+    private func render(
+        input: URL,
+        output: URL,
+        title: String,
+        subtitle: String?,
+        position: RibbonPosition = .bottom
+    ) throws {
         try AppIconRenderer.render(
             input: input,
             output: output,
             title: title,
             subtitle: subtitle,
-            color: try #require(RibbonColor.parse("#1E1E1ED9"))
+            color: try #require(RibbonColor.parse("#1E1E1ED9")),
+            position: position
         )
     }
 
@@ -253,6 +389,20 @@ final class AppIconRendererTests {
         return properties[kCGImagePropertyProfileName] as? String
     }
 
+    private struct RGBA: Equatable {
+        var r: UInt8
+        var g: UInt8
+        var b: UInt8
+        var a: UInt8
+    }
+
+    private func rgba(_ image: CGImage, x: Int, yFromTop: Int) throws -> RGBA {
+        let data = try pixels(image)
+        let row = firstRowIsTop ? yFromTop : (image.height - 1 - yFromTop)
+        let offset = (row * image.width + x) * 4
+        return RGBA(r: data[offset], g: data[offset + 1], b: data[offset + 2], a: data[offset + 3])
+    }
+
     private func pixels(_ image: CGImage) throws -> [UInt8] {
         let width = image.width
         let height = image.height
@@ -281,5 +431,40 @@ final class AppIconRendererTests {
         default:
             return true
         }
+    }
+
+    private static func detectFirstRowIsTop() throws -> Bool {
+        let colorSpace = try #require(CGColorSpace(name: CGColorSpace.sRGB))
+        let context = try #require(CGContext(
+            data: nil,
+            width: 1,
+            height: 2,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.setFillColor(try #require(CGColor(colorSpace: colorSpace, components: [1, 0, 0, 1])))
+        context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+        context.setFillColor(try #require(CGColor(colorSpace: colorSpace, components: [0, 0, 1, 1])))
+        context.fill(CGRect(x: 0, y: 1, width: 1, height: 1))
+        let image = try #require(context.makeImage())
+
+        var data = [UInt8](repeating: 0, count: 8)
+        try data.withUnsafeMutableBytes { buffer in
+            let read = try #require(CGContext(
+                data: buffer.baseAddress,
+                width: 1,
+                height: 2,
+                bitsPerComponent: 8,
+                bytesPerRow: 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ))
+            read.interpolationQuality = .none
+            read.draw(image, in: CGRect(x: 0, y: 0, width: 1, height: 2))
+        }
+        // CG の y=1（上端）を青、y=0（下端）を赤にした。先頭が青ならバッファ先頭は上端。
+        return data[2] > 200 && data[0] < 50
     }
 }
