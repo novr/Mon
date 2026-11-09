@@ -1,6 +1,6 @@
 # Mon
 
-macOS のアプリアイコンに、ビルド番号やブランチ名の帯バッジを合成する CLI です。既定は下端の水平な帯です。上端の帯と右上の斜めリボンも選べます。
+macOS のアプリアイコンに、ビルド番号やブランチ名のバッジを合成する CLI です。既定は下端の shield です。`-s` があると左右2色、無いと1区画です。上端、上下2段の帯、右上の斜めリボンも選べます。
 
 - Pure Swift。画像処理の外部ライブラリは使いません。
 - 実行時のシステム依存はありません。CoreGraphics / CoreText / ImageIO だけで描画します。
@@ -31,15 +31,22 @@ SwiftPM のプロダクト名は `Mon` です。Homebrew とリリースアー�
 ```text
 -i, --input <path>       入力画像（必須）
 -o, --output <path>      出力 PNG。省略時は入力が .png のときだけ上書き
--t, --title <string>     帯の上段（必須）
--s, --subtitle <string>  帯の下段
---color <hex>            帯の色。#RRGGBB または #RRGGBBAA（既定 #1E1E1ED9）
--p, --position <value>   top（上端の水平な帯） / bottom（下端の水平な帯） / ribbon（右上の斜めリボン）。既定 bottom
+-t, --title <string>     左（shield）または上段（band）。必須
+-s, --subtitle <string>  右（shield）または下段（band）。省略すると shield は1区画
+--color <hex>            右側（shield）または帯（band）の色。#RRGGBB または #RRGGBBAA（既定 #1E1E1ED9）
+-p, --position <value>   top（上端） / bottom（下端） / ribbon（右上の斜めリボン。style は使わない）。既定 bottom
+--style <value>          shield（左右2色。既定） / band（上下2段）
 ```
 
+既定の `shield` は、`-s` があると左右2色、無いと `--color` の1区画です。2色のとき `--color` は右側だけに使い、左側は `#555555` で、不透明度だけ `--color` に合わせます。バッジの幅は文字幅の合計で、選んだ辺の中央に揃えます。上下2段は `--style band` です。`-p ribbon` は style を見ずに斜めリボンを描きます。
+
+v0.2.0 までは `-t` と `-s` が下端の全幅2段でした。同じ指定は左右2色になります。
+
 ```bash
+mon -i AppIcon.png -t DEV
 mon -i AppIcon.png -t DEV -s "v1.2.0 (42)"
 mon -i photo.jpg -o photo-badged.png -t MAIN --color "#C0392B"
+mon -i AppIcon.png -t DEV -s "42" -p top
 mon -i AppIcon.png -t DEV -s "v1.2.0 (42)" -p ribbon
 ```
 

@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 @testable import BadgeIcon
 
 final class AppIconRendererTests {
+    private static let shieldRed = "#E74C3C"
+
     private let directory: URL
     private let firstRowIsTop: Bool
 
@@ -190,6 +192,7 @@ final class AppIconRendererTests {
         let command = try BadgeIconCommand.parse(["-i", input.path, "-t", "DEV"])
         try command.validate()
         #expect(command.position == "bottom")
+        #expect(command.style == "shield")
     }
 
     @Test func omittedPositionMatchesBottomRender() throws {
@@ -281,6 +284,175 @@ final class AppIconRendererTests {
         #expect(try rgba(after, x: 51, yFromTop: 13) != beforeRibbon)
     }
 
+    @Test func shieldSplitsLabelAndValueOnTheBottomEdge() throws {
+        let input = directory.appendingPathComponent("shield-bottom.png")
+        try writeImage(
+            to: input,
+            type: .png,
+            width: 128,
+            height: 128,
+            colorSpace: try #require(CGColorSpace(name: CGColorSpace.sRGB)),
+            hasAlpha: false
+        )
+        let before = try load(input)
+        let output = directory.appendingPathComponent("shield-bottom-out.png")
+        let shieldColor = try #require(RibbonColor.parse(Self.shieldRed))
+        try render(
+            input: input,
+            output: output,
+            title: "I",
+            subtitle: "MMMM",
+            position: .bottom,
+            style: .shield,
+            color: shieldColor
+        )
+        let after = try load(output)
+        #expect(try rgba(after, x: 0, yFromTop: 127) == rgba(before, x: 0, yFromTop: 127))
+        #expect(try rgba(after, x: 127, yFromTop: 127) == rgba(before, x: 127, yFromTop: 127))
+
+        let band = try shieldBand(after, source: before)
+        let samples = try shieldPaddingSamples(after, source: before, yFromTop: band.midY)
+        #expect(isLabelGray(samples.left))
+        #expect(isValueRed(samples.right))
+        #expect(samples.leftX < samples.rightX)
+        #expect(isLabelGray(try rgba(after, x: band.minX, yFromTop: band.midY)))
+        #expect(isValueRed(try rgba(after, x: band.maxX, yFromTop: band.midY)))
+        #expect(isLabelGray(try rgba(after, x: samples.leftX, yFromTop: band.minY)))
+        #expect(isValueRed(try rgba(after, x: samples.rightX, yFromTop: band.minY)))
+    }
+
+    @Test func shieldLongTextKeepsBothColorsInside() throws {
+        let input = directory.appendingPathComponent("shield-long.png")
+        try writeImage(
+            to: input,
+            type: .png,
+            width: 32,
+            height: 32,
+            colorSpace: try #require(CGColorSpace(name: CGColorSpace.sRGB)),
+            hasAlpha: false
+        )
+        let before = try load(input)
+        let output = directory.appendingPathComponent("shield-long-out.png")
+        let shieldColor = try #require(RibbonColor.parse(Self.shieldRed))
+        try render(
+            input: input,
+            output: output,
+            title: String(repeating: "W", count: 80),
+            subtitle: String(repeating: "M", count: 80),
+            position: .bottom,
+            style: .shield,
+            color: shieldColor
+        )
+        let after = try load(output)
+        let band = try shieldBand(after, source: before)
+        #expect(band.minX >= 0)
+        #expect(band.maxX < after.width)
+        #expect(isLabelGray(try rgba(after, x: band.minX, yFromTop: band.midY)))
+        #expect(isValueRed(try rgba(after, x: band.maxX, yFromTop: band.midY)))
+        #expect(band.minX < band.maxX)
+    }
+
+    @Test func shieldOnTopLeavesTheBottomCenter() throws {
+        let input = directory.appendingPathComponent("shield-top.png")
+        try writeImage(
+            to: input,
+            type: .png,
+            width: 128,
+            height: 128,
+            colorSpace: try #require(CGColorSpace(name: CGColorSpace.sRGB)),
+            hasAlpha: false
+        )
+        let before = try load(input)
+        let output = directory.appendingPathComponent("shield-top-out.png")
+        let shieldColor = try #require(RibbonColor.parse(Self.shieldRed))
+        try render(
+            input: input,
+            output: output,
+            title: "I",
+            subtitle: "MMMM",
+            position: .top,
+            style: .shield,
+            color: shieldColor
+        )
+        let after = try load(output)
+        #expect(try rgba(after, x: 64, yFromTop: 127) == rgba(before, x: 64, yFromTop: 127))
+        let band = try shieldBand(after, source: before)
+        let samples = try shieldPaddingSamples(after, source: before, yFromTop: band.midY)
+        #expect(isLabelGray(samples.left))
+        #expect(isValueRed(samples.right))
+        #expect(band.maxY < 40)
+    }
+
+    @Test func invalidStyleIsRejected() throws {
+        let input = try fixturePNG()
+        expectRejected(
+            ["-i", input.path, "-t", "DEV", "-s", "1", "--style", "pill"],
+            containing: "表記の指定が正しくありません"
+        )
+    }
+
+    @Test func shieldWithoutSubtitleIsOneColor() throws {
+        let input = directory.appendingPathComponent("shield-one.png")
+        try writeImage(
+            to: input,
+            type: .png,
+            width: 128,
+            height: 128,
+            colorSpace: try #require(CGColorSpace(name: CGColorSpace.sRGB)),
+            hasAlpha: false
+        )
+        let before = try load(input)
+        let output = directory.appendingPathComponent("shield-one-out.png")
+        let shieldColor = try #require(RibbonColor.parse(Self.shieldRed))
+        try render(
+            input: input,
+            output: output,
+            title: "DEV",
+            subtitle: nil,
+            position: .bottom,
+            style: .shield,
+            color: shieldColor
+        )
+        let after = try load(output)
+        #expect(try rgba(after, x: 0, yFromTop: 127) == rgba(before, x: 0, yFromTop: 127))
+        #expect(try rgba(after, x: 127, yFromTop: 127) == rgba(before, x: 127, yFromTop: 127))
+        let band = try shieldBand(after, source: before)
+        #expect(isValueRed(try rgba(after, x: band.minX, yFromTop: band.midY)))
+        #expect(isValueRed(try rgba(after, x: band.maxX, yFromTop: band.midY)))
+        #expect(!isLabelGray(try rgba(after, x: band.minX, yFromTop: band.midY)))
+
+        let blankSubtitle = try BadgeIconCommand.parse(["-i", input.path, "-t", "DEV", "-s", "   "])
+        try blankSubtitle.validate()
+    }
+
+    @Test func ribbonIgnoresStyle() throws {
+        let input = directory.appendingPathComponent("ribbon-style.png")
+        try writeImage(
+            to: input,
+            type: .png,
+            width: 64,
+            height: 64,
+            colorSpace: try #require(CGColorSpace(name: CGColorSpace.sRGB)),
+            hasAlpha: false
+        )
+        let source = try load(input)
+        let omitted = directory.appendingPathComponent("ribbon-omitted.png")
+        let shield = directory.appendingPathComponent("ribbon-shield.png")
+        let band = directory.appendingPathComponent("ribbon-band.png")
+        var command = try BadgeIconCommand.parse(["-i", input.path, "-o", omitted.path, "-t", "DEV", "-s", "v1", "-p", "ribbon"])
+        try command.run()
+        command = try BadgeIconCommand.parse(["-i", input.path, "-o", shield.path, "-t", "DEV", "-s", "v1", "-p", "ribbon", "--style", "shield"])
+        try command.run()
+        command = try BadgeIconCommand.parse(["-i", input.path, "-o", band.path, "-t", "DEV", "-s", "v1", "-p", "ribbon", "--style", "band"])
+        try command.run()
+        let omittedPixels = try pixels(try load(omitted))
+        #expect(omittedPixels == (try pixels(try load(shield))))
+        #expect(omittedPixels == (try pixels(try load(band))))
+        let image = try load(omitted)
+        #expect(try rgba(image, x: 4, yFromTop: 60) == rgba(source, x: 4, yFromTop: 60))
+        #expect(try rgba(image, x: 51, yFromTop: 13) != rgba(source, x: 51, yFromTop: 13))
+    }
+
     @Test func topAndBottomRendersDiffer() throws {
         let input = directory.appendingPathComponent("diff.png")
         try writeImage(
@@ -305,16 +477,80 @@ final class AppIconRendererTests {
         output: URL,
         title: String,
         subtitle: String?,
-        position: RibbonPosition = .bottom
+        position: RibbonPosition = .bottom,
+        style: BadgeStyle = .band,
+        color: RibbonColor? = nil
     ) throws {
         try AppIconRenderer.render(
             input: input,
             output: output,
             title: title,
             subtitle: subtitle,
-            color: try #require(RibbonColor.parse("#1E1E1ED9")),
-            position: position
+            color: color ?? (try #require(RibbonColor.parse("#1E1E1ED9"))),
+            position: position,
+            style: style
         )
+    }
+
+    private func shieldBand(
+        _ image: CGImage,
+        source: CGImage
+    ) throws -> (minX: Int, maxX: Int, minY: Int, maxY: Int, midY: Int) {
+        let after = try pixels(image)
+        let before = try pixels(source)
+        var minX = image.width
+        var maxX = 0
+        var minY = image.height
+        var maxY = 0
+        var found = false
+        for y in 0..<image.height {
+            let row = firstRowIsTop ? y : (image.height - 1 - y)
+            for x in 0..<image.width {
+                let offset = (row * image.width + x) * 4
+                let changed = after[offset] != before[offset]
+                    || after[offset + 1] != before[offset + 1]
+                    || after[offset + 2] != before[offset + 2]
+                    || after[offset + 3] != before[offset + 3]
+                if changed {
+                    found = true
+                    minX = min(minX, x)
+                    maxX = max(maxX, x)
+                    minY = min(minY, y)
+                    maxY = max(maxY, y)
+                }
+            }
+        }
+        try #require(found)
+        return (minX, maxX, minY, maxY, (minY + maxY) / 2)
+    }
+
+    private func shieldPaddingSamples(
+        _ image: CGImage,
+        source: CGImage,
+        yFromTop: Int
+    ) throws -> (left: RGBA, right: RGBA, leftX: Int, rightX: Int) {
+        var painted: [Int] = []
+        for x in 0..<image.width {
+            if try rgba(image, x: x, yFromTop: yFromTop) != rgba(source, x: x, yFromTop: yFromTop) {
+                painted.append(x)
+            }
+        }
+        let leftX = try #require(painted.first) + 2
+        let rightX = try #require(painted.last) - 2
+        return (
+            try rgba(image, x: leftX, yFromTop: yFromTop),
+            try rgba(image, x: rightX, yFromTop: yFromTop),
+            leftX,
+            rightX
+        )
+    }
+
+    private func isLabelGray(_ pixel: RGBA) -> Bool {
+        abs(Int(pixel.r) - 85) <= 8 && abs(Int(pixel.g) - 85) <= 8 && abs(Int(pixel.b) - 85) <= 8
+    }
+
+    private func isValueRed(_ pixel: RGBA) -> Bool {
+        pixel.r > 200 && pixel.g < 90 && pixel.b < 80
     }
 
     private func validate(_ arguments: [String]) throws {

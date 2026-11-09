@@ -13,17 +13,20 @@ struct BadgeIconCommand: ParsableCommand {
     @Option(name: .shortAndLong, help: "出力 PNG のパス。省略時は入力が PNG のときだけ上書きする")
     var output: String?
 
-    @Option(name: .shortAndLong, help: "帯の上段文字列")
+    @Option(name: .shortAndLong, help: "左の文字列。band では上段")
     var title: String
 
-    @Option(name: .shortAndLong, help: "帯の下段文字列")
+    @Option(name: .shortAndLong, help: "右の文字列。band では下段。省略すると shield は1区画")
     var subtitle: String?
 
-    @Option(name: .long, help: "帯の色。#RRGGBB または #RRGGBBAA")
+    @Option(name: .long, help: "右側（shield）または帯（band）の色。#RRGGBB または #RRGGBBAA")
     var color: String = "#1E1E1ED9"
 
     @Option(name: .shortAndLong, help: "帯の位置。top（上端）、bottom（下端）、ribbon（右上の斜めリボン）。省略時は bottom")
     var position: String = "bottom"
+
+    @Option(name: .long, help: "表記。shield（左右2色）、band（上下2段）。省略時は shield")
+    var style: String = "shield"
 
     func validate() throws {
         _ = try resolved()
@@ -37,7 +40,8 @@ struct BadgeIconCommand: ParsableCommand {
             title: job.title,
             subtitle: job.subtitle,
             color: job.color,
-            position: job.position
+            position: job.position,
+            style: job.style
         )
     }
 
@@ -92,13 +96,18 @@ struct BadgeIconCommand: ParsableCommand {
             throw ValidationError("位置の指定が正しくありません（top、bottom、ribbon）: \(position)")
         }
 
+        guard let badgeStyle = BadgeStyle.parse(style) else {
+            throw ValidationError("表記の指定が正しくありません（band、shield）: \(style)")
+        }
+
         return RenderJob(
             input: inputURL,
             output: outputURL,
             title: trimmedTitle,
             subtitle: resolvedSubtitle,
             color: ribbonColor,
-            position: ribbonPosition
+            position: ribbonPosition,
+            style: badgeStyle
         )
     }
 }

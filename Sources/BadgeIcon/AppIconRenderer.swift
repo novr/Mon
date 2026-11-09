@@ -14,6 +14,15 @@ enum RibbonPosition: String, CaseIterable {
     }
 }
 
+enum BadgeStyle: String, CaseIterable {
+    case band
+    case shield
+
+    static func parse(_ raw: String) -> BadgeStyle? {
+        Self(rawValue: raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    }
+}
+
 struct RenderJob {
     var input: URL
     var output: URL
@@ -21,6 +30,7 @@ struct RenderJob {
     var subtitle: String?
     var color: RibbonColor
     var position: RibbonPosition
+    var style: BadgeStyle
 }
 
 struct RibbonColor {
@@ -106,7 +116,8 @@ enum AppIconRenderer {
         title: String,
         subtitle: String?,
         color: RibbonColor,
-        position: RibbonPosition
+        position: RibbonPosition,
+        style: BadgeStyle = .shield
     ) throws {
         let image = try loadImage(at: input)
         guard image.width > 0, image.height > 0 else {
@@ -119,8 +130,8 @@ enum AppIconRenderer {
 
         context.interpolationQuality = .high
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
-        switch position {
-        case .ribbon:
+        switch (position, style) {
+        case (.ribbon, _):
             drawBadge(
                 in: context,
                 width: image.width,
@@ -129,8 +140,18 @@ enum AppIconRenderer {
                 subtitle: subtitle,
                 color: color
             )
-        case .top, .bottom:
+        case (.top, .band), (.bottom, .band):
             drawBand(
+                in: context,
+                width: image.width,
+                height: image.height,
+                title: title,
+                subtitle: subtitle,
+                color: color,
+                atTop: position == .top
+            )
+        case (.top, .shield), (.bottom, .shield):
+            drawShield(
                 in: context,
                 width: image.width,
                 height: image.height,
@@ -302,6 +323,130 @@ enum AppIconRenderer {
             )
         }
         ctx.restoreGState()
+    }
+
+    private struct ShieldPart {
+        var text: String
+        var fill: RibbonColor
+        var textColor: CGColor
+        var textWidth: CGFloat
+    }
+
+    private static func drawShield(
+        in ctx: CGContext,
+        width: Int,
+        height: Int,
+        title: String,
+        subtitle: String?,
+        color: RibbonColor,
+        atTop: Bool
+    ) {
+        let s = min(CGFloat(width), CGFloat(height))
+        // 端がピクセルの途中だと、縁が半透明の1列になる。
+        let thickness = max(1, (0.16 * s).rounded())
+        let padding = 0.04 * s
+        let heightCap = thickness * 0.55
+        let iconWidth = CGFloat(width)
+        let labelColor = RibbonColor(
+            red: CGFloat(0x55) / 255,
+            green: CGFloat(0x55) / 255,
+            blue: CGFloat(0x55) / 255,
+            alpha: color.alpha
+        )
+        var parts: [ShieldPart] = []
+        if let subtitle {
+            parts.append(ShieldPart(text: title, fill: labelColor, textColor: labelColor.textCGColor, textWidth: 0))
+            parts.append(ShieldPart(text: subtitle, fill: color, textColor: color.textCGColor, textWidth: 0))
+        } else {
+            parts.append(ShieldPart(text: title, fill: color, textColor: color.textCGColor, textWidth: 0))
+        }
+
+        var fontSize = max(heightCap, 0.01)
+        func measure() {
+            for index in parts.indices {
+                parts[index].textWidth = lineWidth(parts[index].text, fontSize: fontSize, color: parts[index].textColor)
+            }
+        }
+        measure()
+        let textLimit = iconWidth - 2 * padding * CGFloat(parts.count)
+        for _ in 0..<12 {
+            let textSum = parts.reduce(CGFloat(0)) { $0 + $1.textWidth }
+            guard textSum > textLimit, textSum > 0 else { break }
+            let next = fontSize * textLimit / textSum
+            if next >= fontSize - 0.01 { break }
+            fontSize = max(next, 0.01)
+            measure()
+            if fontSize <= 0.01 { break }
+        }
+
+        var widths = parts.map { $0.textWidth + 2 * padding }
+        let rawWidth = widths.reduce(0, +)
+        if rawWidth > iconWidth, rawWidth > 0 {
+            let scale = iconWidth / rawWidth
+            widths = widths.map { $0 * scale }
+        }
+        var pixels = widths.map { max(CGFloat(1), $0.rounded()) }
+        var overflow = pixels.reduce(0, +) - iconWidth
+        if overflow > 0 {
+            let floor: CGFloat = parts.count > 1 ? 1 : min(1, iconWidth)
+            for index in pixels.indices.reversed() {
+                let spare = pixels[index] - floor
+                guard spare > 0 else { continue }
+                let take = min(spare, overflow)
+                pixels[index] -= take
+                overflow -= take
+                if overflow <= 0 { break }
+            }
+        }
+        let badgeWidth = pixels.reduce(0, +)
+        var badgeX = ((iconWidth - badgeWidth) / 2).rounded()
+        if badgeX < 0 { badgeX = 0 }
+        if badgeX + badgeWidth > iconWidth {
+            badgeX = max(0, iconWidth - badgeWidth)
+        }
+        let badgeY = atTop ? CGFloat(height) - thickness : 0
+        let centerY = badgeY + thickness / 2
+
+        ctx.saveGState()
+        ctx.setShouldAntialias(false)
+        var originX = badgeX
+        for (part, pixelWidth) in zip(parts, pixels) {
+            ctx.setFillColor(part.fill.cgColor)
+            ctx.fill(CGRect(x: originX, y: badgeY, width: pixelWidth, height: thickness))
+            originX += pixelWidth
+        }
+        ctx.restoreGState()
+
+        originX = badgeX
+        for (part, pixelWidth) in zip(parts, pixels) {
+            let rect = CGRect(x: originX, y: badgeY, width: pixelWidth, height: thickness)
+            ctx.saveGState()
+            ctx.clip(to: rect)
+            drawMeasuredLine(part.text, fontSize: fontSize, centerX: rect.midX, yCenter: centerY, color: part.textColor, in: ctx)
+            ctx.restoreGState()
+            originX += pixelWidth
+        }
+    }
+
+    private static func drawMeasuredLine(
+        _ text: String,
+        fontSize: CGFloat,
+        centerX: CGFloat,
+        yCenter: CGFloat,
+        color: CGColor,
+        in ctx: CGContext
+    ) {
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        let line = makeLine(text, fontSize: fontSize, color: color)
+        let measured = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, nil))
+        ctx.textMatrix = .identity
+        ctx.textPosition = CGPoint(x: centerX - measured / 2, y: yCenter - (ascent - descent) / 2)
+        CTLineDraw(line, ctx)
+    }
+
+    private static func lineWidth(_ text: String, fontSize: CGFloat, color: CGColor) -> CGFloat {
+        CGFloat(CTLineGetTypographicBounds(makeLine(text, fontSize: fontSize, color: color), nil, nil, nil))
     }
 
     @discardableResult
