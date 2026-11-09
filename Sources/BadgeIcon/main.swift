@@ -19,7 +19,7 @@ struct BadgeIconCommand: ParsableCommand {
     @Option(name: .shortAndLong, help: "右の文字列。band では下段。省略すると shield は1区画")
     var subtitle: String?
 
-    @Option(name: .long, help: "帯の色。#RRGGBB または #RRGGBBAA")
+    @Option(name: .long, help: "右側（shield）または帯（band）の色。#RRGGBB または #RRGGBBAA")
     var color: String = "#1E1E1ED9"
 
     @Option(name: .shortAndLong, help: "帯の位置。top（上端）、bottom（下端）、ribbon（右上の斜めリボン）。省略時は bottom")
