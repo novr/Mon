@@ -4,12 +4,23 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
+enum RibbonPosition: String, CaseIterable {
+    case top
+    case bottom
+    case ribbon
+
+    static func parse(_ raw: String) -> RibbonPosition? {
+        Self(rawValue: raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    }
+}
+
 struct RenderJob {
     var input: URL
     var output: URL
     var title: String
     var subtitle: String?
     var color: RibbonColor
+    var position: RibbonPosition
 }
 
 struct RibbonColor {
@@ -89,7 +100,14 @@ enum RenderError: LocalizedError {
 }
 
 enum AppIconRenderer {
-    static func render(input: URL, output: URL, title: String, subtitle: String?, color: RibbonColor) throws {
+    static func render(
+        input: URL,
+        output: URL,
+        title: String,
+        subtitle: String?,
+        color: RibbonColor,
+        position: RibbonPosition
+    ) throws {
         let image = try loadImage(at: input)
         guard image.width > 0, image.height > 0 else {
             throw RenderError.loadFailed(input.path)
@@ -101,14 +119,27 @@ enum AppIconRenderer {
 
         context.interpolationQuality = .high
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
-        drawBadge(
-            in: context,
-            width: image.width,
-            height: image.height,
-            title: title,
-            subtitle: subtitle,
-            color: color
-        )
+        switch position {
+        case .ribbon:
+            drawBadge(
+                in: context,
+                width: image.width,
+                height: image.height,
+                title: title,
+                subtitle: subtitle,
+                color: color
+            )
+        case .top, .bottom:
+            drawBand(
+                in: context,
+                width: image.width,
+                height: image.height,
+                title: title,
+                subtitle: subtitle,
+                color: color,
+                atTop: position == .top
+            )
+        }
         guard let rendered = context.makeImage() else {
             throw RenderError.contextFailed
         }
@@ -189,13 +220,87 @@ enum AppIconRenderer {
         ctx.saveGState()
         ctx.clip(to: band)
         let textColor = color.textCGColor
+        // 45° の角では、角から距離 d の位置で見える長さが 2d になる。
+        func cornerWidth(_ yCenter: CGFloat) -> (CGFloat) -> CGFloat {
+            { lineHeight in 2 * -(yCenter + lineHeight / 2) - 2 * padding }
+        }
         if let subtitle {
-            let titleSize = drawLine(title, yCenter: -distance + thickness * 0.22, heightCap: thickness * 0.40, padding: padding, color: textColor, in: ctx)
-            drawLine(subtitle, yCenter: -distance - thickness * 0.18, heightCap: thickness * 0.30, maxFontSize: titleSize, padding: padding, color: textColor, in: ctx)
+            let titleY = -distance + thickness * 0.22
+            let subtitleY = -distance - thickness * 0.18
+            let titleSize = drawLine(title, yCenter: titleY, heightCap: thickness * 0.40, availableWidth: cornerWidth(titleY), color: textColor, in: ctx)
+            drawLine(subtitle, yCenter: subtitleY, heightCap: thickness * 0.30, maxFontSize: titleSize, availableWidth: cornerWidth(subtitleY), color: textColor, in: ctx)
         } else {
-            drawLine(title, yCenter: -distance, heightCap: thickness * 0.55, padding: padding, color: textColor, in: ctx)
+            drawLine(title, yCenter: -distance, heightCap: thickness * 0.55, availableWidth: cornerWidth(-distance), color: textColor, in: ctx)
         }
         ctx.restoreGState()
+        ctx.restoreGState()
+    }
+
+    private static func drawBand(
+        in ctx: CGContext,
+        width: Int,
+        height: Int,
+        title: String,
+        subtitle: String?,
+        color: RibbonColor,
+        atTop: Bool
+    ) {
+        let s = min(CGFloat(width), CGFloat(height))
+        let thickness = 0.22 * s
+        let padding = 0.04 * s
+        let bandY = atTop ? CGFloat(height) - thickness : 0
+        let band = CGRect(x: 0, y: bandY, width: CGFloat(width), height: thickness)
+
+        ctx.setFillColor(color.cgColor)
+        ctx.fill(band)
+
+        let border = CGColor(colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!, components: [1, 1, 1, 0.9])!
+        ctx.setStrokeColor(border)
+        ctx.setLineWidth(0.006 * s)
+        let edgeY = atTop ? bandY : bandY + thickness
+        ctx.beginPath()
+        ctx.move(to: CGPoint(x: 0, y: edgeY))
+        ctx.addLine(to: CGPoint(x: CGFloat(width), y: edgeY))
+        ctx.strokePath()
+
+        ctx.saveGState()
+        ctx.clip(to: band)
+        let textColor = color.textCGColor
+        let centerY = bandY + thickness / 2
+        let centerX = CGFloat(width) / 2
+        let fixedWidth = CGFloat(width) - 2 * padding
+        let availableWidth: (CGFloat) -> CGFloat = { _ in fixedWidth }
+        if let subtitle {
+            let titleSize = drawLine(
+                title,
+                yCenter: centerY + thickness * 0.22,
+                heightCap: thickness * 0.40,
+                availableWidth: availableWidth,
+                centerX: centerX,
+                color: textColor,
+                in: ctx
+            )
+            drawLine(
+                subtitle,
+                yCenter: centerY - thickness * 0.18,
+                heightCap: thickness * 0.30,
+                maxFontSize: titleSize,
+                availableWidth: availableWidth,
+                centerX: centerX,
+                color: textColor,
+                in: ctx
+            )
+        } else {
+            drawLine(
+                title,
+                yCenter: centerY,
+                heightCap: thickness * 0.55,
+                availableWidth: availableWidth,
+                centerX: centerX,
+                color: textColor,
+                in: ctx
+            )
+        }
         ctx.restoreGState()
     }
 
@@ -205,7 +310,8 @@ enum AppIconRenderer {
         yCenter: CGFloat,
         heightCap: CGFloat,
         maxFontSize: CGFloat = .greatestFiniteMagnitude,
-        padding: CGFloat,
+        availableWidth: (_ lineHeight: CGFloat) -> CGFloat,
+        centerX: CGFloat = 0,
         color: CGColor,
         in ctx: CGContext
     ) -> CGFloat {
@@ -217,8 +323,7 @@ enum AppIconRenderer {
 
         for _ in 0..<8 {
             let lineHeight = ascent + descent
-            let cornerDistance = -(yCenter + lineHeight / 2)
-            let available = 2 * cornerDistance - 2 * padding
+            let available = availableWidth(lineHeight)
             let heightScale = lineHeight > heightCap && lineHeight > 0 ? heightCap / lineHeight : 1
             let widthScale: CGFloat
             if available <= 0 {
@@ -244,7 +349,7 @@ enum AppIconRenderer {
         }
 
         ctx.textMatrix = .identity
-        ctx.textPosition = CGPoint(x: -measured / 2, y: yCenter - (ascent - descent) / 2)
+        ctx.textPosition = CGPoint(x: centerX - measured / 2, y: yCenter - (ascent - descent) / 2)
         CTLineDraw(line, ctx)
         return fontSize
     }
